@@ -1,20 +1,29 @@
 metadata name = 'Hub Networking'
 metadata description = 'This module will deploy a hub for a zero-trust hub & spoke network.'
 
+targetScope = 'subscription'
+
 // ============== //
 // Parameters     //
 // ============== //
 
 @description('Optional. Location for all Resources.')
-param location string = resourceGroup().location
+param location string = deployment().location
 
 @description('Optional. Enable/Disable usage telemetry for module.')
 param enableTelemetry bool = false
 
 @description('Optional: Select which resources will be deployed.')
-param selectResources object = {
-  monitoring: true
-
+param selectResource selectResourceType = {
+   azureBastion: false
+   azureFirewall: false
+   azureRouteServer: false
+   vpnVirtualNetworkGateway: false
+   expressRouteVirtualNetworkGateway: false
+   nvaFirewall: false
+   nvaRouter: false
+   monitoring: false
+   budget: false
 }
 
 // ============== //
@@ -25,9 +34,27 @@ param selectResources object = {
 // Resources      //
 // ============== //
 
+// Network Watcher Resource Group
+
+resource networkWatcherRg 'Microsoft.Resources/resourceGroups@2024-11-01' = {
+  name: 'NetworkWatcherRG'
+  location: location
+}
+
 // Network Watcher
 
+module networkWatcher 'br/public:avm/res/network/network-watcher:0.4.0' = {
+  scope: networkWatcherRg
+  name: '${uniqueString(deployment().name, location)}-nw'
+  params: {
+    name: 'NetworkWatcher_${location}'
+    location: location
+  }
+}
+
 // VNet Flow Logs
+
+// Network resource group
 
 // Virtual Network
 
@@ -44,6 +71,10 @@ param selectResources object = {
 // Azure Bastion
 
 // Budget
+
+// NVA Router Resource Group
+
+// NVA Firewall Resource Group
 
 // =============== //
 // Outputs         //
