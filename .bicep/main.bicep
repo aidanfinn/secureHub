@@ -38,12 +38,36 @@ param tags object = {}
 @description('Optional. The reserved IP prefix for the entire hub & spoke deployment.')
 param dataCentrePrefix string = '10/0.0.0/16'
 
+param firewallUserDefinedRoutes routesDefinitionType = [
+  {
+    name: 'Everywhere'
+    properties: {
+      addressPrefix: '0.0.0.0/0'
+      nextHopType: 'Internet'
+    }
+  }
+]
+
+@description('Optional. Resource ID(s) of storage systems that are used for diagnostics monitoring. Defaults to empty.')
+param diagnosticsStorage diagnosticsStorageType = {}
+
 // ============== //
 // Variables      //
 // ============== //
 
 var namingUniqueString = take(uniqueString(subscription().id, location), 8)
 
+var monitoringSettings = length(diagnosticsStorage) > 0
+  ? [
+      {
+        eventHubAuthorizationRuleResourceId: diagnosticsStorage.?eventHubAuthorizationRuleId ?? null
+        eventHubName: diagnosticsStorage.?eventHubName ?? null
+        name: 'monitoringSettings'
+        storageAccountResourceId: diagnosticsStorage.?storageAccountResourceId ?? null
+        workspaceResourceId: diagnosticsStorage.?workspaceResourceId ?? null
+      }
+    ]
+  : null
 
 // ============== //
 // Resources      //
@@ -89,7 +113,6 @@ module networkWatcherStorage 'br/public:avm/res/storage/storage-account:0.18.2' 
   }
 }
 
-
 // Network resource group
 
 resource networkResourceGroup 'Microsoft.Resources/resourceGroups@2024-11-01' = {
@@ -102,22 +125,271 @@ resource networkResourceGroup 'Microsoft.Resources/resourceGroups@2024-11-01' = 
 
 // GatewaySubnet Route Table
 
-module gatewaySubnetRouteTable 'br/public:avm/res/network/route-table:0.4.0' = {
+module gatewaySubnetRouteTable 'br/public:avm/res/network/route-table:0.4.0' = if (selectResource.?vpnVirtualNetworkGateway! || selectResource.?expressRouteVirtualNetworkGateway!) {
   scope: networkResourceGroup
-  name: take('netRg-vnet-gatewaysubnet-${uniqueString(deployment().name, location)}', 64)
+  name: take('netRg-rt-gw-${uniqueString(deployment().name, location)}', 64)
   params: {
     name: '${networkResourceGroup.name}-vnet-GatewaySubnet-rt'
     tags: union(tags, {
-      Purpose: 'GatewaySubnet route table'
+      Purpose: 'A Route Table for the GatewaySubnet sunet'
     })
+    enableTelemetry: enableTelemetry
   }
 }
 
-// RouterSubnet Route Table
+// NvaRouterSubnet Route Table
+
+module nvaRouterSubnetRouteTable 'br/public:avm/res/network/route-table:0.4.0' = if (selectResource.?nvaRouter!) {
+  scope: networkResourceGroup
+  name: take('netRg-rt-nvar-${uniqueString(deployment().name, location)}', 64)
+  params: {
+    name: '${networkResourceGroup.name}-vnet-NvaRouterSubnet-rt'
+    tags: union(tags, {
+      Purpose: 'A Route Table for the NVA router'
+    })
+    enableTelemetry: enableTelemetry
+  }
+}
+
+// AzureFirewallSubnet Route Table
+
+module azureFirewallSubnetRouteTable 'br/public:avm/res/network/route-table:0.4.0' = if (selectResource.?azureFirewall!) {
+  scope: networkResourceGroup
+  name: take('netRg-rt-af-${uniqueString(deployment().name, location)}', 64)
+  params: {
+    name: '${networkResourceGroup.name}-vnet-AzureFirewallSubnet-rt'
+    tags: union(tags, {
+      Purpose: 'A Route Table for the Azure Firewall'
+    })
+    routes: firewallUserDefinedRoutes
+    enableTelemetry: enableTelemetry
+  }
+}
 
 // AzureFirewallManagementSubnet Route Table
 
+module azureFirewallManagementSubnetRouteTable 'br/public:avm/res/network/route-table:0.4.0' = if (selectResource.?azureFirewall!) {
+  scope: networkResourceGroup
+  name: take('netRg-rt-afm-${uniqueString(deployment().name, location)}', 64)
+  params: {
+    name: '${networkResourceGroup.name}-vnet-AzureFirewallManagementSubnet-rt'
+    tags: union(tags, {
+      Purpose: 'A Route Table for the Azure Firewall management feature'
+    })
+    routes: [
+      {
+        name: 'Everywhere'
+        properties: {
+          addressPrefix: '0.0.0.0/0'
+          nextHopType: 'Internet'
+        }
+      }
+    ]
+    enableTelemetry: enableTelemetry
+  }
+}
+
+
+// NvaFirewallSubnet Route Table
+
+module nvaFirewallSubnetRouteTable 'br/public:avm/res/network/route-table:0.4.0' = if (selectResource.?nvaFirewall!) {
+  scope: networkResourceGroup
+  name: take('netRg-rt-nvaf-${uniqueString(deployment().name, location)}', 64)
+  params: {
+    name: '${networkResourceGroup.name}-vnet-NvaFirewallSubnet-rt'
+    tags: union(tags, {
+      Purpose: 'A Route Table for the NVA Firewall'
+    })
+    routes: firewallUserDefinedRoutes
+    enableTelemetry: enableTelemetry
+  }
+}
+
 // AzureBastionSubnet NSG
+
+module azureBastionSubnetNsg 'br/public:avm/res/network/network-security-group:0.5.0' = {
+  scope: networkResourceGroup
+  name: take('netRg-nsg-azb-${uniqueString(deployment().name, location)}', 64)
+  params: {
+    name: '${networkResourceGroup.name}-vnet-AzureBackstionSubnet-nsg'
+    tags: union(tags, {
+      Purpose: 'A Route Table for the NVA Firewall'
+    })
+    securityRules: [
+      {
+        name: 'AllowHttpsFromInternet'
+        properties: {
+          description: 'Allow remote traffic via HTTPS from Internet'
+          protocol: 'Tcp'
+          sourcePortRange: '*'
+          destinationPortRange: 443
+          sourceAddressPrefix: 'Internet'
+          destinationAddressPrefix: '*'
+          access: 'Allow'
+          priority: 1000
+          direction: 'Inbound'
+          sourcePortRanges: []
+          destinationPortRanges: []
+          sourceAddressPrefixes: []
+          destinationAddressPrefixes: []
+        }
+      }
+      {
+        name: 'AllowControlFromGatewaymanager'
+        properties: {
+          description: 'Allow control plane traffic from Azure Gateway Manager'
+          protocol: 'Tcp'
+          sourcePortRange: '*'
+          destinationPortRange: 443
+          sourceAddressPrefix: 'GatewayManager'
+          destinationAddressPrefix: '*'
+          access: 'Allow'
+          priority: 1100
+          direction: 'Inbound'
+          sourcePortRanges: []
+          destinationPortRanges: []
+          sourceAddressPrefixes: []
+          destinationAddressPrefixes: []
+        }
+      }
+      {
+        name: 'AllowProbeFromAzureLoadBalancer'
+        properties: {
+          description: 'Allow probe traffic from Azure Load Balancer'
+          protocol: 'Tcp'
+          sourcePortRange: '*'
+          destinationPortRange: 443
+          sourceAddressPrefix: 'AzureLoadBalancer'
+          destinationAddressPrefix: '*'
+          access: 'Allow'
+          priority: 1200
+          direction: 'Inbound'
+          sourcePortRanges: []
+          destinationPortRanges: []
+          sourceAddressPrefixes: []
+          destinationAddressPrefixes: []
+        }
+      }
+      {
+        name: 'AllowBastionHostCommunication'
+        properties: {
+          description: 'Allow communications from Azure Bastion'
+          protocol: 'Tcp'
+          sourcePortRange: '*'
+          sourceAddressPrefix: 'VirtualNetwork'
+          destinationAddressPrefix: 'VirtualNetwork'
+          access: 'Allow'
+          priority: 1300
+          direction: 'Inbound'
+          sourcePortRanges: []
+          destinationPortRanges: [
+            8080
+            5701
+          ]
+          sourceAddressPrefixes: []
+          destinationAddressPrefixes: []
+        }
+      }
+      {
+        name: 'DenyEverythingElse'
+        properties: {
+          description: 'Deny all other traffic'
+          protocol: '*'
+          sourcePortRange: '*'
+          destinationPortRange: '*'
+          sourceAddressPrefix: '*'
+          destinationAddressPrefix: '*'
+          access: 'Deny'
+          priority: 4000
+          direction: 'Inbound'
+          sourcePortRanges: []
+          destinationPortRanges: []
+          sourceAddressPrefixes: []
+          destinationAddressPrefixes: []
+        }
+      }
+      {
+        name: 'AllowSshRdpFromAzurebastion'
+        properties: {
+          description: 'Allow RDP and SSH from Azure Bastion'
+          protocol: 'Tcp'
+          sourcePortRange: '*'
+          sourceAddressPrefix: '*'
+          destinationAddressPrefix: 'VirtualNetwork'
+          access: 'Allow'
+          priority: 1000
+          direction: 'Outbound'
+          sourcePortRanges: []
+          destinationPortRanges: [
+            22
+            3389
+          ]
+          sourceAddressPrefixes: []
+          destinationAddressPrefixes: []
+        }
+      }
+      {
+        name: 'AllowDiagnosticsFromAzurebastion'
+        properties: {
+          description: 'Allow diagnostics from Azure Bastion'
+          protocol: 'Tcp'
+          sourcePortRange: '*'
+          destinationPortRange: 443
+          sourceAddressPrefix: '*'
+          destinationAddressPrefix: 'AzureCloud'
+          access: 'Allow'
+          priority: 1100
+          direction: 'Outbound'
+          sourcePortRanges: []
+          destinationPortRanges: []
+          sourceAddressPrefixes: []
+          destinationAddressPrefixes: []
+        }
+      }
+      {
+        name: 'AllowDataPlaneFromAzureBastion'
+        properties: {
+          description: 'Allow data plane communication between the underlying components of Azure Bastion'
+          protocol: '*'
+          sourcePortRange: '*'
+          sourceAddressPrefix: 'VirtualNetwork'
+          destinationAddressPrefix: 'VirtualNetwork'
+          access: 'Allow'
+          priority: 1200
+          direction: 'Outbound'
+          sourcePortRanges: []
+          destinationPortRanges: [
+            8080
+            5701
+          ]
+          sourceAddressPrefixes: []
+          destinationAddressPrefixes: []
+        }
+      }
+      {
+        name: 'AllowGetSessionInformationFromAzurebastion'
+        properties: {
+          description: 'Allow session management traffic from Azure Bastion'
+          protocol: '*'
+          sourcePortRange: *
+          sourceAddressPrefix: '*'
+          destinationAddressPrefix: 'Internet'
+          access: 'Allow'
+          priority: 1300
+          direction: 'Outbound'
+          sourcePortRanges: []
+          destinationPortRanges: [
+            80
+          ]
+          sourceAddressPrefixes: []
+          destinationAddressPrefixes: []
+        }
+      }
+    ]
+    diagnosticSettings: monitoringSettings
+    enableTelemetry: enableTelemetry
+  }
+}
 
 // Virtual Network
 
@@ -132,49 +404,7 @@ module virtualNetwork 'br/public:avm/res/network/virtual-network:0.5.1' = {
     addressPrefixes: [
       cidrSubnet(dataCentrePrefix, 22, 0)
     ]
-    // subnets: [
-    //   {
-    //     name: 'GatewaySubnet'
-    //     addressPrefix: cidrSubnet(dataCentrePrefix, 26, 0)
-    //     routeTableResourceId: gatewaySubnetRouteTable.outputs.resourceId
-    //   }
-    //   {
-    //     name: 'RouterSubnet'
-    //     addressPrefix: cidrSubnet(dataCentrePrefix, 26, 1)
-    //     routeTableResourceId: routerFrontendSubnetRouteTable.outputs.resourceId
-    //   }
-
-    //   {
-    //     name: 'RouteServerSubnet'
-    //     addressPrefix: cidrSubnet(dataCentrePrefix, 26, 14)
-    //   }
-    //   {
-    //     name: 'AzureFirewallSubnet'
-    //     addressPrefix: cidrSubnet(dataCentrePrefix, 24, 1)
-    //     routeTableResourceId: azureFirewallSubnetRouteTable.outputs.resourceId
-    //     serviceEndpoints: [
-    //       'Microsoft.Storage'
-    //       'Microsoft.Sql'
-    //       'Microsoft.AzureCosmosDB'
-    //       'Microsoft.KeyVault'
-    //       'Microsoft.ServiceBus'
-    //       'Microsoft.EventHub'
-    //       'Microsoft.Web'
-    //       'Microsoft.CognitiveServices'
-    //     ]
-    //   }
-    //   {
-    //     name: 'AzureFirewallManagementSubnet'
-    //     addressPrefix: cidrSubnet(dataCentrePrefix, 24, 2)
-    //     routeTableResourceId: azureFirewallmanagementSubnetRouteTable.outputs.resourceId
-    //   }
-    //   {
-    //     name: 'AzureBastionSubnet'
-    //     addressPrefix: cidrSubnet(dataCentrePrefix, 26, 15)
-    //     networkSecurityGroupResourceId: azureBastionSubnetNsg.outputs.resourceId
-    //   }
-    // ]
-    diagnosticSettings: diagnosticSettings
+    diagnosticSettings: monitoringSettings
     enableTelemetry: enableTelemetry
   }
   dependsOn: [
@@ -182,11 +412,11 @@ module virtualNetwork 'br/public:avm/res/network/virtual-network:0.5.1' = {
   ]
 }
 
-// Subnets
+// GatewaySubnet subnet
 
-module GatewaySubnet 'modules/subnet.bicep' = {
+module gatewaySubnet 'modules/subnet.bicep' = if (selectResource.?vpnVirtualNetworkGateway! || selectResource.?expressRouteVirtualNetworkGateway!) {
   scope: networkResourceGroup
-  name: take('netRg-vnet-gatewaysubnet-${uniqueString(deployment().name, location)}', 64)
+  name: take('netRg-vnet-subnet-gw-${uniqueString(deployment().name, location)}', 64)
   params: {
     subnetConfig: {
       name: 'GatewaySubnet'
@@ -197,9 +427,83 @@ module GatewaySubnet 'modules/subnet.bicep' = {
   }
 }
 
+// NvaRouterSubnet subnet
+
+module nvaRouterSubnet 'modules/subnet.bicep' = if (selectResource.?nvaRouter!) {
+  scope: networkResourceGroup
+  name: take('netRg-vnet-subnet-nvar-${uniqueString(deployment().name, location)}', 64)
+  params: {
+    subnetConfig: {
+      name: 'NvaRouterSubnet'
+      addressPrefix: cidrSubnet(dataCentrePrefix, 26, 1)
+      virtualNetworkName: virtualNetwork.outputs.name
+      routeTableResourceId: nvaRouterSubnetRouteTable.outputs.resourceId
+    }
+  }
+}
+
+// RouteServerSubnet subnet
+
+module routeServerSubnet 'modules/subnet.bicep' = if (selectResource.?azureRouteServer!) {
+  scope: networkResourceGroup
+  name: take('netRg-vnet-subnet-ar-${uniqueString(deployment().name, location)}', 64)
+  params: {
+    subnetConfig: {
+      name: 'RouteServerSubnet'
+      addressPrefix: cidrSubnet(dataCentrePrefix, 24, 14)
+      virtualNetworkName: virtualNetwork.outputs.name
+    }
+  }
+}
+
+// AzureFirewallSubnet subnet
+
+module azureFirewallSubnet 'modules/subnet.bicep' = if (selectResource.?azureFirewall!) {
+  scope: networkResourceGroup
+  name: take('netRg-vnet-subnet-af-${uniqueString(deployment().name, location)}', 64)
+  params: {
+    subnetConfig: {
+      name: 'AzureFirewallSubnet'
+      addressPrefix: cidrSubnet(dataCentrePrefix, 24, 2)
+      virtualNetworkName: virtualNetwork.outputs.name
+      routeTableResourceId: azureFirewallSubnetRouteTable.outputs.resourceId
+    }
+  }
+}
+
+// AzureFirewallManagementSubnet subnet
+
+module azureFirewallManagementSubnet 'modules/subnet.bicep' = if (selectResource.?azureFirewall!) {
+  scope: networkResourceGroup
+  name: take('netRg-vnet-subnet-afm-${uniqueString(deployment().name, location)}', 64)
+  params: {
+    subnetConfig: {
+      name: 'AzureFirewallManagementSubnet'
+      addressPrefix: cidrSubnet(dataCentrePrefix, 26, 14)
+      virtualNetworkName: virtualNetwork.outputs.name
+      routeTableResourceId: azureFirewallManagementSubnetRouteTable.outputs.resourceId
+    }
+  }
+}
+
+// NvaFirewallSubnet subnet
+
+module nvaFirewallSubnet 'modules/subnet.bicep' = if (selectResource.?nvaFirewall!) {
+  scope: networkResourceGroup
+  name: take('netRg-vnet-subnet-nvaf-${uniqueString(deployment().name, location)}', 64)
+  params: {
+    subnetConfig: {
+      name: 'NvaFirewallSubnet'
+      addressPrefix: cidrSubnet(dataCentrePrefix, 24, 1)
+      virtualNetworkName: virtualNetwork.outputs.name
+      routeTableResourceId: nvaFirewallSubnetRouteTable.outputs.resourceId
+    }
+  }
+}
+
 // VNet Flow Logs
 
-module flowLogs 'br/public:avm/res/network/network-watcher:0.4.0' = if(selectResource.?monitoring!) {
+module flowLogs 'br/public:avm/res/network/network-watcher:0.4.0' = if (selectResource.?monitoring!) {
   scope: networkWatcherRg
   name: take('networkWatcherRg-fl-${uniqueString(deployment().name, location)}', 64)
   params: {
@@ -271,4 +575,44 @@ type selectResourceType = {
 
   @description('Optional. Should the budget be deployed or not.')
   budget: bool?
+}
+
+type routesDefinitionType = routeDefinitionType[]
+
+type routeDefinitionType = {
+  @description('Mandatory. The name of the User-Defined Route.')
+  name: string
+
+  @description('Optional. The properties of the User-Defined Route.')
+  properties: routeProperties
+}
+
+type routeProperties = {
+  @description('Optional. The adddress prefix of the User-Defined Route.')
+  addressPrefix: string
+
+  @description('Optional. The next hope of the User-Defined Route.')
+  nextHopType: routeNextHopTypeType
+
+  @description('Optional. Used to provide the IP address of a VirtualAppliance next hop type.')
+  nextHopIpAddress: string?
+}
+
+type routeNextHopTypeType = 'Internet' | 'None' | 'VirtualAppliance' | 'VirtualNetworkGateway' | 'VnetLocal'
+
+type diagnosticsStorageType = {
+  @description('Optional. The resource ID of a Log Analytics Workspace.')
+  workspaceResourceId: string?
+
+  @description('Optional. The resource ID of a Storage Account.')
+  storageAccountResourceId: string?
+
+  @description('Optional. The name of an Event Hub.')
+  eventHubName: string?
+
+  @description('Optional. The Authorisation Rule ID for an Event Hub.')
+  eventHubAuthorizationRuleId: string?
+
+  @description('Optional. The Partner ID for a third-party monitoring solution.')
+  marketplacePartnerId: string?
 }
