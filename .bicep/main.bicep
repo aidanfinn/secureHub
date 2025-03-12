@@ -53,6 +53,16 @@ param diagnosticsStorage diagnosticsStorageType = {}
 
 param bastionDefinition bastionDefinitionType = {}
 
+@description('Optional. What availability zones are preferred')
+param zones array = [
+  1
+  2
+  3
+]
+
+@description('Mandatory. Configure the Azure Route Server.')
+param routeServerDefintion routeServerDefintionType
+
 // ============== //
 // Variables      //
 // ============== //
@@ -117,7 +127,7 @@ module networkWatcherStorage 'br/public:avm/res/storage/storage-account:0.18.2' 
 
 // Network resource group
 
-resource networkResourceGroup 'Microsoft.Resources/resourceGroups@2024-11-01' = {
+resource networkRg 'Microsoft.Resources/resourceGroups@2024-11-01' = {
   name: '${name}-net'
   location: location
   tags: union(tags, {
@@ -128,10 +138,10 @@ resource networkResourceGroup 'Microsoft.Resources/resourceGroups@2024-11-01' = 
 // GatewaySubnet Route Table
 
 module gatewaySubnetRouteTable 'br/public:avm/res/network/route-table:0.4.0' = if (selectResource.?vpnVirtualNetworkGateway! || selectResource.?expressRouteVirtualNetworkGateway!) {
-  scope: networkResourceGroup
+  scope: networkRg
   name: take('netRg-rt-gw-${uniqueString(deployment().name, location)}', 64)
   params: {
-    name: '${networkResourceGroup.name}-vnet-GatewaySubnet-rt'
+    name: '${networkRg.name}-vnet-GatewaySubnet-rt'
     tags: union(tags, {
       Purpose: 'A Route Table for the GatewaySubnet sunet'
     })
@@ -142,10 +152,10 @@ module gatewaySubnetRouteTable 'br/public:avm/res/network/route-table:0.4.0' = i
 // NvaRouterSubnet Route Table
 
 module nvaRouterSubnetRouteTable 'br/public:avm/res/network/route-table:0.4.0' = if (selectResource.?nvaRouter!) {
-  scope: networkResourceGroup
+  scope: networkRg
   name: take('netRg-rt-nvar-${uniqueString(deployment().name, location)}', 64)
   params: {
-    name: '${networkResourceGroup.name}-vnet-NvaRouterSubnet-rt'
+    name: '${networkRg.name}-vnet-NvaRouterSubnet-rt'
     tags: union(tags, {
       Purpose: 'A Route Table for the NVA router'
     })
@@ -156,10 +166,10 @@ module nvaRouterSubnetRouteTable 'br/public:avm/res/network/route-table:0.4.0' =
 // AzureFirewallSubnet Route Table
 
 module azureFirewallSubnetRouteTable 'br/public:avm/res/network/route-table:0.4.0' = if (selectResource.?azureFirewall!) {
-  scope: networkResourceGroup
+  scope: networkRg
   name: take('netRg-rt-af-${uniqueString(deployment().name, location)}', 64)
   params: {
-    name: '${networkResourceGroup.name}-vnet-AzureFirewallSubnet-rt'
+    name: '${networkRg.name}-vnet-AzureFirewallSubnet-rt'
     tags: union(tags, {
       Purpose: 'A Route Table for the Azure Firewall'
     })
@@ -171,10 +181,10 @@ module azureFirewallSubnetRouteTable 'br/public:avm/res/network/route-table:0.4.
 // AzureFirewallManagementSubnet Route Table
 
 module azureFirewallManagementSubnetRouteTable 'br/public:avm/res/network/route-table:0.4.0' = if (selectResource.?azureFirewall!) {
-  scope: networkResourceGroup
+  scope: networkRg
   name: take('netRg-rt-afm-${uniqueString(deployment().name, location)}', 64)
   params: {
-    name: '${networkResourceGroup.name}-vnet-AzureFirewallManagementSubnet-rt'
+    name: '${networkRg.name}-vnet-AzureFirewallManagementSubnet-rt'
     tags: union(tags, {
       Purpose: 'A Route Table for the Azure Firewall management feature'
     })
@@ -194,10 +204,10 @@ module azureFirewallManagementSubnetRouteTable 'br/public:avm/res/network/route-
 // NvaFirewallSubnet Route Table
 
 module nvaFirewallSubnetRouteTable 'br/public:avm/res/network/route-table:0.4.0' = if (selectResource.?nvaFirewall!) {
-  scope: networkResourceGroup
+  scope: networkRg
   name: take('netRg-rt-nvaf-${uniqueString(deployment().name, location)}', 64)
   params: {
-    name: '${networkResourceGroup.name}-vnet-NvaFirewallSubnet-rt'
+    name: '${networkRg.name}-vnet-NvaFirewallSubnet-rt'
     tags: union(tags, {
       Purpose: 'A Route Table for the NVA Firewall'
     })
@@ -209,10 +219,10 @@ module nvaFirewallSubnetRouteTable 'br/public:avm/res/network/route-table:0.4.0'
 // AzureBastionSubnet NSG
 
 module azureBastionSubnetNsg 'br/public:avm/res/network/network-security-group:0.5.0' = {
-  scope: networkResourceGroup
+  scope: networkRg
   name: take('netRg-nsg-azb-${uniqueString(deployment().name, location)}', 64)
   params: {
-    name: '${networkResourceGroup.name}-vnet-AzureBackstionSubnet-nsg'
+    name: '${networkRg.name}-vnet-AzureBackstionSubnet-nsg'
     tags: union(tags, {
       Purpose: 'A Route Table for the NVA Firewall'
     })
@@ -223,7 +233,7 @@ module azureBastionSubnetNsg 'br/public:avm/res/network/network-security-group:0
           description: 'Allow remote traffic via HTTPS from Internet'
           protocol: 'Tcp'
           sourcePortRange: '*'
-          destinationPortRange: 443
+          destinationPortRange: '443'
           sourceAddressPrefix: 'Internet'
           destinationAddressPrefix: '*'
           access: 'Allow'
@@ -241,7 +251,7 @@ module azureBastionSubnetNsg 'br/public:avm/res/network/network-security-group:0
           description: 'Allow control plane traffic from Azure Gateway Manager'
           protocol: 'Tcp'
           sourcePortRange: '*'
-          destinationPortRange: 443
+          destinationPortRange: '443'
           sourceAddressPrefix: 'GatewayManager'
           destinationAddressPrefix: '*'
           access: 'Allow'
@@ -259,7 +269,7 @@ module azureBastionSubnetNsg 'br/public:avm/res/network/network-security-group:0
           description: 'Allow probe traffic from Azure Load Balancer'
           protocol: 'Tcp'
           sourcePortRange: '*'
-          destinationPortRange: 443
+          destinationPortRange: '443'
           sourceAddressPrefix: 'AzureLoadBalancer'
           destinationAddressPrefix: '*'
           access: 'Allow'
@@ -284,8 +294,8 @@ module azureBastionSubnetNsg 'br/public:avm/res/network/network-security-group:0
           direction: 'Inbound'
           sourcePortRanges: []
           destinationPortRanges: [
-            8080
-            5701
+            '8080'
+            '5701'
           ]
           sourceAddressPrefixes: []
           destinationAddressPrefixes: []
@@ -322,8 +332,8 @@ module azureBastionSubnetNsg 'br/public:avm/res/network/network-security-group:0
           direction: 'Outbound'
           sourcePortRanges: []
           destinationPortRanges: [
-            22
-            3389
+            '22'
+            '3389'
           ]
           sourceAddressPrefixes: []
           destinationAddressPrefixes: []
@@ -335,7 +345,7 @@ module azureBastionSubnetNsg 'br/public:avm/res/network/network-security-group:0
           description: 'Allow diagnostics from Azure Bastion'
           protocol: 'Tcp'
           sourcePortRange: '*'
-          destinationPortRange: 443
+          destinationPortRange: '443'
           sourceAddressPrefix: '*'
           destinationAddressPrefix: 'AzureCloud'
           access: 'Allow'
@@ -360,8 +370,8 @@ module azureBastionSubnetNsg 'br/public:avm/res/network/network-security-group:0
           direction: 'Outbound'
           sourcePortRanges: []
           destinationPortRanges: [
-            8080
-            5701
+            '8080'
+            '5701'
           ]
           sourceAddressPrefixes: []
           destinationAddressPrefixes: []
@@ -372,7 +382,7 @@ module azureBastionSubnetNsg 'br/public:avm/res/network/network-security-group:0
         properties: {
           description: 'Allow session management traffic from Azure Bastion'
           protocol: '*'
-          sourcePortRange: *
+          sourcePortRange: '*'
           sourceAddressPrefix: '*'
           destinationAddressPrefix: 'Internet'
           access: 'Allow'
@@ -380,7 +390,7 @@ module azureBastionSubnetNsg 'br/public:avm/res/network/network-security-group:0
           direction: 'Outbound'
           sourcePortRanges: []
           destinationPortRanges: [
-            80
+            '80'
           ]
           sourceAddressPrefixes: []
           destinationAddressPrefixes: []
@@ -395,10 +405,10 @@ module azureBastionSubnetNsg 'br/public:avm/res/network/network-security-group:0
 // Virtual Network
 
 module virtualNetwork 'br/public:avm/res/network/virtual-network:0.5.1' = {
-  scope: networkResourceGroup
+  scope: networkRg
   name: take('netRg-vnet-${uniqueString(deployment().name, location)}', 64)
   params: {
-    name: '${networkResourceGroup.name}-vnet'
+    name: '${networkRg.name}-vnet'
     tags: union(tags, {
       Purpose: 'Hub virtual network'
     })
@@ -416,7 +426,7 @@ module virtualNetwork 'br/public:avm/res/network/virtual-network:0.5.1' = {
 // GatewaySubnet subnet
 
 module gatewaySubnet 'modules/subnet.bicep' = if (selectResource.?vpnVirtualNetworkGateway! || selectResource.?expressRouteVirtualNetworkGateway!) {
-  scope: networkResourceGroup
+  scope: networkRg
   name: take('netRg-vnet-subnet-gw-${uniqueString(deployment().name, location)}', 64)
   params: {
     subnetConfig: {
@@ -431,7 +441,7 @@ module gatewaySubnet 'modules/subnet.bicep' = if (selectResource.?vpnVirtualNetw
 // NvaRouterSubnet subnet
 
 module nvaRouterSubnet 'modules/subnet.bicep' = if (selectResource.?nvaRouter!) {
-  scope: networkResourceGroup
+  scope: networkRg
   name: take('netRg-vnet-subnet-nvar-${uniqueString(deployment().name, location)}', 64)
   params: {
     subnetConfig: {
@@ -446,7 +456,7 @@ module nvaRouterSubnet 'modules/subnet.bicep' = if (selectResource.?nvaRouter!) 
 // RouteServerSubnet subnet
 
 module routeServerSubnet 'modules/subnet.bicep' = if (selectResource.?azureRouteServer!) {
-  scope: networkResourceGroup
+  scope: networkRg
   name: take('netRg-vnet-subnet-ar-${uniqueString(deployment().name, location)}', 64)
   params: {
     subnetConfig: {
@@ -460,7 +470,7 @@ module routeServerSubnet 'modules/subnet.bicep' = if (selectResource.?azureRoute
 // AzureFirewallSubnet subnet
 
 module azureFirewallSubnet 'modules/subnet.bicep' = if (selectResource.?azureFirewall!) {
-  scope: networkResourceGroup
+  scope: networkRg
   name: take('netRg-vnet-subnet-af-${uniqueString(deployment().name, location)}', 64)
   params: {
     subnetConfig: {
@@ -475,7 +485,7 @@ module azureFirewallSubnet 'modules/subnet.bicep' = if (selectResource.?azureFir
 // AzureFirewallManagementSubnet subnet
 
 module azureFirewallManagementSubnet 'modules/subnet.bicep' = if (selectResource.?azureFirewall!) {
-  scope: networkResourceGroup
+  scope: networkRg
   name: take('netRg-vnet-subnet-afm-${uniqueString(deployment().name, location)}', 64)
   params: {
     subnetConfig: {
@@ -490,7 +500,7 @@ module azureFirewallManagementSubnet 'modules/subnet.bicep' = if (selectResource
 // NvaFirewallSubnet subnet
 
 module nvaFirewallSubnet 'modules/subnet.bicep' = if (selectResource.?nvaFirewall!) {
-  scope: networkResourceGroup
+  scope: networkRg
   name: take('netRg-vnet-subnet-nvaf-${uniqueString(deployment().name, location)}', 64)
   params: {
     subnetConfig: {
@@ -533,20 +543,48 @@ module flowLogs 'br/public:avm/res/network/network-watcher:0.4.0' = if (selectRe
 
 // Azure Route Server
 
-
+module azureRouteServer 'modules/azureRouteServer.bicep' = if(selectResource.?azureRouteServer!) {
+  scope: networkRg
+  name: take('netRg-rtserv-${uniqueString(deployment().name, location)}', 64)
+  params: {
+    name: name
+    location: location
+    tags: tags
+    zones: zones ?? (length(zones) > 0 ? zones : null)
+    routeServerDefintion: {
+      azureFirewallResourceId: azureFirewall.outputs.resourceId
+      vNetResourceId: virtualNetwork.outputs.resourceId
+      sku: routeServerDefintion.?sku ?? 'Basic'
+      minCapacity: routeServerDefintion.?minCapacity  ?? 1
+      allowBranchToBranchTraffic: routeServerDefintion.?allowBranchToBranchTraffic ?? false
+      virtualRouterAsn: routeServerDefintion.?virtualRouterAsn ?? 65515
+      hubRoutingPreference: routeServerDefintion.?hubRoutingPreference ?? 'ExpressRoute'      
+    }
+    diagnosticsStorage: diagnosticsStorage
+    enableTelemetry: enableTelemetry
+  }
+}
 
 // Azure Firewall Policy
 
 // Azure Firewall
 
+module azureFirewall 'br/public:avm/res/network/azure-firewall:0.6.0' = if(selectResource.?azureFirewall!) {
+  scope: networkRg
+  name: take('netRg-afw-${uniqueString(deployment().name, location)}', 64)
+  params: {
+    name: '${networkRg.name}-afw'
+  }
+}
+
 // Azure Bastion
 
 module azureBastion 'br/public:avm/res/network/bastion-host:0.6.1' = if(selectResource.?azureBastion!) {
-  scope: networkResourceGroup
+  scope: networkRg
   name: take('netRg-azb-${uniqueString(deployment().name, location)}', 64)
   params: {
     location: location
-    name: '${networkResourceGroup.name}-bas'
+    name: '${networkRg.name}-bas'
     tags: union(tags, {
       Purpose: 'A shared bastion for RDP/SSH access to virtual machines'
     })
@@ -671,3 +709,22 @@ type bastionDefinitionType = {
 }
 
 type  bastionSkuNameType = string
+
+type routeServerDefintionType = {
+  @description('Optional. The SKU of Azure Bastion. Default = Basic')
+  sku: string?
+
+  @description('Optional. The minimum number of Azure Bastion instances. Default = 1')
+  minCapacity: int?
+
+  @description('Optional. Should branch-to-branch traffic be routed. Default = false')
+  allowBranchToBranchTraffic: bool?
+
+  @description('Optional. The ASN for Azure Route Server. Default = 65515')
+  virtualRouterAsn: int?
+
+  @description('Optional. Which site-to-site connection type is preferred. Default = ExpressRoute')
+  hubRoutingPreference: routeServerHubRoutingPreferenceType?
+}
+
+type routeServerHubRoutingPreferenceType =   'ASPath' | 'ExpressRoute' | 'VpnGateway'
