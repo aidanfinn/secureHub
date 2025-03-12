@@ -51,6 +51,8 @@ param firewallUserDefinedRoutes routesDefinitionType = [
 @description('Optional. Resource ID(s) of storage systems that are used for diagnostics monitoring. Defaults to empty.')
 param diagnosticsStorage diagnosticsStorageType = {}
 
+param bastionDefinition bastionDefinitionType = {}
+
 // ============== //
 // Variables      //
 // ============== //
@@ -188,7 +190,6 @@ module azureFirewallManagementSubnetRouteTable 'br/public:avm/res/network/route-
     enableTelemetry: enableTelemetry
   }
 }
-
 
 // NvaFirewallSubnet Route Table
 
@@ -507,6 +508,10 @@ module flowLogs 'br/public:avm/res/network/network-watcher:0.4.0' = if (selectRe
   scope: networkWatcherRg
   name: take('networkWatcherRg-fl-${uniqueString(deployment().name, location)}', 64)
   params: {
+    location: location
+    tags: union(tags, {
+      Purpose: 'Enable Virtual Network Flow Logs'
+    })
     flowLogs: [
       {
         formatVersion: 2
@@ -533,6 +538,29 @@ module flowLogs 'br/public:avm/res/network/network-watcher:0.4.0' = if (selectRe
 // Azure Firewall
 
 // Azure Bastion
+
+module azureBastion 'br/public:avm/res/network/bastion-host:0.6.1' = if(selectResource.?azureBastion!) {
+  scope: networkResourceGroup
+  name: take('netRg-azb-${uniqueString(deployment().name, location)}', 64)
+  params: {
+    location: location
+    name: '${networkResourceGroup.name}-bas'
+    tags: union(tags, {
+      Purpose: 'A shared bastion for RDP/SSH access to virtual machines'
+    })
+    virtualNetworkResourceId: virtualNetwork.outputs.resourceId
+    disableCopyPaste: bastionDefinition.?disableCopyPaste ?? true
+    enableFileCopy: bastionDefinition.?enableFileCopy ?? false
+    enableIpConnect: bastionDefinition.?enableIpConnect ?? false
+    enableShareableLink: bastionDefinition.?enableShareableLink ?? false
+    roleAssignments: bastionDefinition.?roleAssignments ?? []
+    scaleUnits: bastionDefinition.?bastionHost.?scaleUnits ?? 1
+    skuName: bastionDefinition.?bastionHost.?skuName ?? 'Basic'
+    enableKerberos: bastionDefinition.?bastionHost.?enableKerberos ?? false
+    diagnosticSettings: monitoringSettings
+    enableTelemetry: enableTelemetry
+  }
+}
 
 // Budget
 
@@ -616,3 +644,28 @@ type diagnosticsStorageType = {
   @description('Optional. The Partner ID for a third-party monitoring solution.')
   marketplacePartnerId: string?
 }
+
+type bastionDefinitionType = {
+  @description('Optional. Is copy/paste disabled. Default = true.')
+  disableCopyPaste: bool?
+
+  @description('Optional. Is file copy enabled. Default = false.')
+  enableFileCopy: bool?
+
+  @description('Optional. Is IP connect enabled. Default = false.')
+  enableIpConnect: bool?
+
+  @description('Optional. Is shareable link enbled. Default = false.')
+  enableShareableLink: bool?
+
+  @description('Optional. The number of scale units to deploy. Default = 1.')
+  scaleUnits: int?
+
+  @description('Optional. The tier of Azure Bastion to deploy. Default = Basic.')
+  skuName: string?
+
+  @description('Optional. Is Kerberos enabled. Default = false.')
+  enableKerberos: bool?
+}
+
+type  bastionSkuNameType = string
